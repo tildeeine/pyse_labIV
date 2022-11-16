@@ -1,5 +1,6 @@
 import simpy
 import numpy as np
+from math import factorial
 import matplotlib.pyplot as plt
  
 # Constants for the simulation------------------------------------------------------------------------------------------
@@ -11,14 +12,22 @@ avgServiceTime = 2 #min
 SIM_TIME = 60*16 #enhet min, 16 timer
 
 #Global variables for the simulation------------------------------------------------------------------------------------
-checkoutSection = 0
+checkoutSection = 0 #for å ha en global variabel for denne
 downtime = 0
 Qtime = []
+headOfQ = {}
 customersAtCheckout = 0 #Fordi .users også regner med repairman, siden vi bruker request på denne for å markere at counter ikke tilgjenglig
 
-headOfQ = {}
-for noOFWorkingCounters in range(0, 5): #for å kunne analysere Qtime vs antall fungerende counters, se impact av failure på Qtime
-    headOfQ[noOFWorkingCounters] = []
+def resetGlobals(): #For å kunne resette for hver kjøring
+    global headOfQ, downtime, Qtime, customersAtCheckout, checkoutSection
+    checkoutSection = 0
+    downtime = 0
+    Qtime = []
+    headOfQ = {}
+    customersAtCheckout = 0
+
+    for noOFWorkingCounters in range(0, 5): #for å kunne analysere Qtime vs antall fungerende counters, se impact av failure på Qtime
+        headOfQ[noOFWorkingCounters] = []
 
 
 #Timers-----------------------------------------------------------------------------------------------------------------
@@ -43,7 +52,6 @@ class InterruptGenerator():
 
         if first:
             checkoutSection = CheckoutSection(env)
-            first = False
 
         
     def generateInterrupts(self, env):
@@ -60,7 +68,7 @@ class InterruptGenerator():
 class CheckoutSection():
     def __init__(self, env):
         self.env = env
-        self.counters = simpy.Resource(env, capacity=4) 
+        self.counters = simpy.PriorityResource(env, capacity=4) #For å kunne fikse en interrupt før man tar neste kunde, dersom en interrupt skjer like før en kunde går til kassen
         self.repairman = simpy.Resource(env, capacity=1)
         self.workingCounters = 4
         self.currentDowntime = 0
@@ -90,7 +98,7 @@ class Customer():
     def run(self, env):
         global checkoutSection, headOfQ, customersAtCheckout
 
-        with checkoutSection.counters.request() as reqCounter: 
+        with checkoutSection.counters.request(1) as reqCounter: #Lavere priority
             startQ = env.now
             yield reqCounter 
 
@@ -99,12 +107,12 @@ class Customer():
             workingCounters = checkoutSection.workingCounters
             endQ = env.now - startQ
 
-            Qtime.append(endQ)
-            headOfQ[workingCounters].append(endQ) #! siden vi logger qtime mot fungerende counters når denne akkurat har fått counter, så vil aldri workingCounters være 0, siden en må være tilgjengelig før vi logger. Skal dette endres? 
+            Qtime.append(endQ) 
+            headOfQ[workingCounters].append(endQ)
 
             yield self.env.timeout(serviceTime(avgServiceTime))
 
-            customersAtCheckout-=1
+        customersAtCheckout-=1
 
 
 
@@ -119,7 +127,7 @@ class RepairCounter():
 
         checkoutSection.workingCounters -= 1
 
-        with checkoutSection.counters.request() as reqCounter: 
+        with checkoutSection.counters.request(0) as reqCounter: 
             yield reqCounter
 
             with checkoutSection.repairman.request() as reqRepair: 
@@ -133,46 +141,89 @@ class RepairCounter():
 
 
     
+#Setup for values for plotting----------------------------------------------------------------------------------
+failuresAtHead = {}#lager en dictionary som passer til plotting
 
+for n in range(0, 4): #stopper på 4 fordi vi aldri logger med 4 failures
+    failuresAtHead[n] = []
 
-#Running simulation-----------------------------------------------------------------------------
-env = simpy.Environment()
-i1 = InterruptGenerator(env, True) #En interrupt per counter
-i2 = InterruptGenerator(env, False)
-i3 = InterruptGenerator(env, False)
-i4 = InterruptGenerator(env, False)
-
-env.process(i1.generateInterrupts(env)) #Starter generator for hver av instansene av interruptGenerator
-env.process(i2.generateInterrupts(env))
-env.process(i3.generateInterrupts(env))
-env.process(i4.generateInterrupts(env))
-
-env.run(until=SIM_TIME)
+def updateFailuresAtHead(dictFromRun):
+    global failuresAtHead
+    for keys in dictFromRun.keys(): #keys her er fungerende counters, må ha 4-fungerende for feilet
+        if keys != 0: #vil ikke ha med fra når ingen fungerer i plottet
+            try:
+                newAvgQ = sum(dictFromRun[keys])/float(len(dictFromRun[keys]))
+                failuresAtHead[4-keys].append(newAvgQ)
+            except:
+                failuresAtHead[4-keys].append(0)
 
 
 #Calculating service availability and avgQtime---------------------------------------------------------------------
-serviceAvailability = 1-(float(downtime)/SIM_TIME) #? spørsmål: Skal man kjøre denne flere ganger? Eller holder det med én?
-avgQTime = sum(Qtime)/float(len(Qtime))
+def otherValues(): #! ta snitt av disse etter simulering kjørt, og print til å sette inn for oppgB3
+    global downtime, Qtime
+    serviceAvailability = 1-(float(downtime)/SIM_TIME) 
+    avgQTime = sum(Qtime)/float(len(Qtime))
 
-print("Asymptotic availability of checkout:                  ", format(serviceAvailability*100, ".8f"), "%")
-print("Average waiting time for customers in checkout queue:   ", format(avgQTime, ".8f"), "minutes") 
-
-
-#Plotting 
-#TODO plot the waiting time as a function of number of failures from simulation and analytical models. Compare results and comment on them.
-failuresAtHead = {}#lager en dictionary som passer til plotting
-for keys in headOfQ.keys(): #keys her er fungerende counters, må ha 4-fungerende for feilet
-    try:
-        failuresAtHead[4-keys] = sum(headOfQ[keys])/float(len(headOfQ[keys]))
-    except:
-        failuresAtHead[4-keys] = 0
-
-    print("failed:", 4-keys, "avg time", failuresAtHead[4-keys])
+    print("Asymptotic availability of checkout:                  ", format(serviceAvailability*100, ".8f"), "%")
+    print("Average waiting time for customers in checkout queue:   ", format(avgQTime, ".8f"), "minutes") 
 
 
-plt.plot(failuresAtHead.keys(), failuresAtHead.values(), 'r.') #number of failures = 4-workingcounters #!vurder å kjøre med boxplot for å få kjørt simuleringen flere ganger
-#TODO legg inn analytical:
+#Running simulation-----------------------------------------------------------------------------
+def runSim(env):
+    global headOfQ
+    resetGlobals()
+
+    i1 = InterruptGenerator(env, True) #En interrupt per counter
+    i2 = InterruptGenerator(env, False)
+    i3 = InterruptGenerator(env, False)
+    i4 = InterruptGenerator(env, False)
+
+    env.process(i1.generateInterrupts(env)) #Starter generator for hver av instansene av interruptGenerator
+    env.process(i2.generateInterrupts(env))
+    env.process(i3.generateInterrupts(env))
+    env.process(i4.generateInterrupts(env))
+
+    env.run(until=SIM_TIME)
+
+    updateFailuresAtHead(headOfQ)
+    #otherValues() #?skal vi printe denne for hver gang? er vi interessert i denne? Blir spurt etter en oppgave, usikker
+
+#Running simulation-----------------------------------------------------------------------------------------------
+noOfSims = 30 
+for simulation in range(noOfSims):
+    env = simpy.Environment() #?Må denne tas for hver gang
+    runSim(env)
+
+# Analytical calculation------------------------------------------------------------------------------------
+analytical = {}
+
+def calculateAnalytical():
+    global lambdaC, analytical
+    mu = 1/2
+    A=lambdaC/mu 
+    n = 4 
+
+    prob_waiting = []
+    for i in range(n):
+        prob_waiting.append(A**n/factorial(n)*n/(n-A)/((A**i)/factorial(i)+A**n/factorial(n)*n/(n-A)))
+
+    failedCounters = 0
+    expected_waiting = []
+    for p_waiting in prob_waiting:
+        failedCounters += 1
+        analytical[failedCounters] = 1/(mu*(n-A))*p_waiting
+        print(1/(mu*(n-A))*p_waiting)
+    
+calculateAnalytical()
+
+#Plotting --------------------------------------------------------------------------------------------------------
+fig, ax = plt.subplots() 
+ax.boxplot(failuresAtHead.values(), showfliers=False) #Vil ikke vise outliers, for å kunne se boxplottene ordentlig 
+ax.set_xticklabels(failuresAtHead.keys())
+plt.plot(analytical.keys(), analytical.values(), 'r.', markersize = 20)
 
 plt.xlabel("Number of failed counters")
 plt.ylabel("Average Qtime for failures")
 plt.show()
+
+#!oppdater modell når du får noe som kjører rett
