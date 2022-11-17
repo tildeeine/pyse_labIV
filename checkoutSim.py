@@ -11,8 +11,6 @@ expectedFailureIntensity = 1/(60*4) #4 timer
 meanRepairTime = 15 #min
 avgServiceTime = 2 #min
 
-SIM_TIME = 60*16 #enhet min, 16 timer
-
 
 
 #Global variables for the simulation------------------------------------------------------------------------------------
@@ -27,12 +25,13 @@ def resetGlobals(): #For å kunne resette for hver kjøring
     downtime = 0
     Qtime = []
     headOfQ = {}
-    for noOFWorkingCounters in range(0, 5): #for å kunne analysere Qtime vs antall fungerende counters, se impact av failure på Qtime
+    for noOFWorkingCounters in range(1, 5): #for å kunne analysere Qtime vs antall fungerende counters, se impact av failure på Qtime. Logger uansett aldri for 0
         headOfQ[noOFWorkingCounters] = []
 
 #Values for keeping track of important results
 allServiceA = []
 allQtimes = []
+avgNoOfFailures = [0, 0, 0, 0]
 
 
 
@@ -123,7 +122,6 @@ class RepairCounter():
     def fix(self, env):
         global checkoutSection, downtime, meanRepairTime
 
-
         with checkoutSection.counters.request(0) as reqCounter: 
             yield reqCounter
             checkoutSection.workingCounters -= 1 #failure/interrupt registreres først når en kasse er tilgjenglig for å ha en failure
@@ -157,6 +155,7 @@ def updateFailuresAtHead(dictFromRun):
 
 
 
+
 # Calculating service availability and avgQtime---------------------------------------------------------------------
 def logValues(headOfQ): 
     global allServiceA, allQtimes
@@ -164,7 +163,14 @@ def logValues(headOfQ):
     allQtimes.append(sum(Qtime)/float(len(Qtime)))
 
     updateFailuresAtHead(headOfQ)
+    logNoOfFailures(headOfQ)
 
+
+def logNoOfFailures(dictionary):
+    global avgNoOfFailures
+    for keys in headOfQ.keys(): #1, 2, 3, 4
+        avgNoOfFailures[4-keys] = (avgNoOfFailures[4-keys]+len(headOfQ[keys]))/float(2)
+    
 
 
 #Running simulation-----------------------------------------------------------------------------
@@ -185,14 +191,6 @@ def runSim(env):
     env.run(until=SIM_TIME)
 
     logValues(headOfQ)
-
-
-
-#Running simulation-----------------------------------------------------------------------------------------------
-noOfSims = 200
-for simulation in range(noOfSims):
-    env = simpy.Environment() #?Må denne tas for hver gang
-    runSim(env)
 
 
 
@@ -227,17 +225,31 @@ def calculateAnalytical():
 
 
 
-# Printing avgValues from simulations-----------------------------------------------------------------------
+#Running simulation-----------------------------------------------------------------------------------------------
+SIM_TIME = 60*60 #enhet min, 16 timer
+noOfSims = 500
+
+for simulation in range(noOfSims):
+    env = simpy.Environment() 
+    runSim(env)
+
+
+
+# Printing values from simulations-----------------------------------------------------------------------
 avgAvailability = sum(allServiceA)/float(len(allServiceA))
 avgQtime = sum(allQtimes)/float(len(allQtimes))
-print("Average asymptotic availability of checkout:                  ", format(avgAvailability*100, ".8f"), "%")
-print("Average waiting time for customers in checkout queue:   ", format(avgQtime, ".8f"), "minutes") 
+print("Average asymptotic availability of checkout:           ", format(avgAvailability*100, ".8f"), "%")
+print("Average waiting time for customers in checkout queue:   ", format(avgQtime, ".8f"), "minutes \n") 
 
 totalWait, timeToWait = calculateAnalytical()
 for times in range(len(timeToWait)):
-    print("Expected waiting time with", times, "working counters:", format(timeToWait[times], ".6f"), "minutes")
+    print("Expected waiting time with", times, "counter failures:", format(timeToWait[times], ".6f"), "minutes")
 print("                  Total expected waiting time:", format(totalWait, ".6f"), "minutes")
 
+
+print("\nThe average number of times we experienced x failures:")
+for avgFailures in range(len(avgNoOfFailures)):
+    print(avgFailures, "counter failures: ", format(avgNoOfFailures[avgFailures], ".2f"), "times")
 
 
 #Plotting --------------------------------------------------------------------------------------------------------
@@ -246,5 +258,5 @@ ax.boxplot(failuresAtHead.values(), showfliers=False, positions=list(failuresAtH
 plt.plot(list(failuresAtHead.keys()), timeToWait, 'r.', markersize = 20)
 
 plt.xlabel("Number of failed counters")
-plt.ylabel("Average Qtime for failures")
+plt.ylabel("Average Qtime")
 plt.show()
