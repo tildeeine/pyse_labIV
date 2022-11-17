@@ -3,6 +3,8 @@ import numpy as np
 from math import factorial
 import matplotlib.pyplot as plt
  
+
+ 
 # Constants for the simulation------------------------------------------------------------------------------------------
 lambdaC = 1/3 #enhet min**-1
 expectedFailureIntensity = 1/(60*4) #4 timer
@@ -11,27 +13,28 @@ avgServiceTime = 2 #min
 
 SIM_TIME = 60*16 #enhet min, 16 timer
 
+
+
 #Global variables for the simulation------------------------------------------------------------------------------------
 checkoutSection = 0 #for å ha en global variabel for denne
 downtime = 0
 Qtime = []
 headOfQ = {}
-customersAtCheckout = 0 #Fordi .users også regner med repairman, siden vi bruker request på denne for å markere at counter ikke tilgjenglig
 
 def resetGlobals(): #For å kunne resette for hver kjøring
-    global headOfQ, downtime, Qtime, customersAtCheckout, checkoutSection
+    global headOfQ, downtime, Qtime, checkoutSection
     checkoutSection = 0
     downtime = 0
     Qtime = []
     headOfQ = {}
-    customersAtCheckout = 0
-
     for noOFWorkingCounters in range(0, 5): #for å kunne analysere Qtime vs antall fungerende counters, se impact av failure på Qtime
         headOfQ[noOFWorkingCounters] = []
 
 #Values for keeping track of important results
 allServiceA = []
 allQtimes = []
+
+
 
 #Timers-----------------------------------------------------------------------------------------------------------------
 def customerInterArrivalTime(lambdaC):
@@ -47,6 +50,7 @@ def repairTime(meanRepairTime):
     return np.random.exponential(meanRepairTime)
 
 
+
 #Entity-classes--------------------------------------------------------------------------------------------------
 class InterruptGenerator():
     def __init__(self, env, first):
@@ -56,17 +60,14 @@ class InterruptGenerator():
         if first:
             checkoutSection = CheckoutSection(env)
 
-        
     def generateInterrupts(self, env):
-        global customersAtCheckout
         while True:
             yield env.timeout(timeBeforeFailure(expectedFailureIntensity))
 
-            if checkoutSection.workingCounters >= 0 and customersAtCheckout < checkoutSection.workingCounters:
-                checkoutSection.checkout_proc.interrupt() #Kan ikke sende interrupt om alle counters ute av funksjon eller opptatt
+            if checkoutSection.workingCounters > 0:
+                checkoutSection.checkout_proc.interrupt() #Kan ikke sende interrupt om alle counters ute av funksjon. Hvis alle opptatt blir denne satt i Q ved at den venter på kasse-ressurs, men med prioritet. Gir failure til kasse like etter kunde ferdig. 
 
         
-
 
 class CheckoutSection():
     def __init__(self, env):
@@ -92,20 +93,17 @@ class CheckoutSection():
 
 
 
-
 class Customer():
     def __init__(self, env):
         self.env = env
         self.process = env.process(self.run(env))
     
     def run(self, env):
-        global checkoutSection, headOfQ, customersAtCheckout
+        global checkoutSection, headOfQ
 
         with checkoutSection.counters.request(1) as reqCounter: #Lavere priority
             startQ = env.now
             yield reqCounter 
-
-            customersAtCheckout+=1
 
             workingCounters = checkoutSection.workingCounters
             endQ = env.now - startQ
@@ -114,9 +112,6 @@ class Customer():
             headOfQ[workingCounters].append(endQ)
 
             yield self.env.timeout(serviceTime(avgServiceTime))
-
-        customersAtCheckout-=1
-
 
 
 
@@ -128,10 +123,10 @@ class RepairCounter():
     def fix(self, env):
         global checkoutSection, downtime, meanRepairTime
 
-        checkoutSection.workingCounters -= 1
 
         with checkoutSection.counters.request(0) as reqCounter: 
             yield reqCounter
+            checkoutSection.workingCounters -= 1 #failure/interrupt registreres først når en kasse er tilgjenglig for å ha en failure
 
             with checkoutSection.repairman.request() as reqRepair: 
                 yield reqRepair
@@ -159,6 +154,7 @@ def updateFailuresAtHead(dictFromRun):
                 failuresAtHead[4-keys].append(newAvgQ)
             except:
                 failuresAtHead[4-keys].append(0)
+
 
 
 # Calculating service availability and avgQtime---------------------------------------------------------------------
@@ -200,8 +196,6 @@ for simulation in range(noOfSims):
 
 
 
-
-
 # Methods for analytical calculation------------------------------------------------------------------------------------
 def prob(n):
     global lambdaC
@@ -231,6 +225,8 @@ def calculateAnalytical():
         totalWait += waitTime*prob(4-a)
     return totalWait, timeToWait
 
+
+
 # Printing avgValues from simulations-----------------------------------------------------------------------
 avgAvailability = sum(allServiceA)/float(len(allServiceA))
 avgQtime = sum(allQtimes)/float(len(allQtimes))
@@ -243,8 +239,8 @@ for times in range(len(timeToWait)):
 print("                  Total expected waiting time:", format(totalWait, ".6f"), "minutes")
 
 
-#Plotting --------------------------------------------------------------------------------------------------------
 
+#Plotting --------------------------------------------------------------------------------------------------------
 fig, ax = plt.subplots()
 ax.boxplot(failuresAtHead.values(), showfliers=False, positions=list(failuresAtHead.keys())) #Vil ikke vise outliers, for å kunne se boxplottene ordentlig 
 plt.plot(list(failuresAtHead.keys()), timeToWait, 'r.', markersize = 20)
@@ -252,5 +248,3 @@ plt.plot(list(failuresAtHead.keys()), timeToWait, 'r.', markersize = 20)
 plt.xlabel("Number of failed counters")
 plt.ylabel("Average Qtime for failures")
 plt.show()
-
-#!oppdater modell når du får noe som kjører rett
