@@ -29,6 +29,9 @@ def resetGlobals(): #For å kunne resette for hver kjøring
     for noOFWorkingCounters in range(0, 5): #for å kunne analysere Qtime vs antall fungerende counters, se impact av failure på Qtime
         headOfQ[noOFWorkingCounters] = []
 
+#Values for keeping track of important results
+allServiceA = []
+allQtimes = []
 
 #Timers-----------------------------------------------------------------------------------------------------------------
 def customerInterArrivalTime(lambdaC):
@@ -158,14 +161,14 @@ def updateFailuresAtHead(dictFromRun):
                 failuresAtHead[4-keys].append(0)
 
 
-#Calculating service availability and avgQtime---------------------------------------------------------------------
-def otherValues(): #! ta snitt av disse etter simulering kjørt, og print til å sette inn for oppgB3
-    global downtime, Qtime
-    serviceAvailability = 1-(float(downtime)/SIM_TIME) 
-    avgQTime = sum(Qtime)/float(len(Qtime))
+# Calculating service availability and avgQtime---------------------------------------------------------------------
+def logValues(headOfQ): 
+    global allServiceA, allQtimes
+    allServiceA.append(1-(float(downtime)/SIM_TIME))
+    allQtimes.append(sum(Qtime)/float(len(Qtime)))
 
-    print("Asymptotic availability of checkout:                  ", format(serviceAvailability*100, ".8f"), "%")
-    print("Average waiting time for customers in checkout queue:   ", format(avgQTime, ".8f"), "minutes") 
+    updateFailuresAtHead(headOfQ)
+
 
 
 #Running simulation-----------------------------------------------------------------------------
@@ -185,42 +188,66 @@ def runSim(env):
 
     env.run(until=SIM_TIME)
 
-    updateFailuresAtHead(headOfQ)
-    #otherValues() #?skal vi printe denne for hver gang? er vi interessert i denne? Blir spurt etter en oppgave, usikker
+    logValues(headOfQ)
+
+
 
 #Running simulation-----------------------------------------------------------------------------------------------
-noOfSims = 30 
+noOfSims = 200
 for simulation in range(noOfSims):
     env = simpy.Environment() #?Må denne tas for hver gang
     runSim(env)
 
-# Analytical calculation------------------------------------------------------------------------------------
-analytical = {}
 
-def calculateAnalytical():
-    global lambdaC, analytical
+
+
+
+# Methods for analytical calculation------------------------------------------------------------------------------------
+def prob(n):
+    global lambdaC
     mu = 1/2
     A=lambdaC/mu 
-    n = 4 
 
-    prob_waiting = []
+    teller = (A**n/factorial(n))*(n/(n-A)) 
+    nevner = 0
     for i in range(n):
-        prob_waiting.append(A**n/factorial(n)*n/(n-A)/((A**i)/factorial(i)+A**n/factorial(n)*n/(n-A)))
+        nevner += ((A**i/factorial(i)))
+    nevner += teller
 
-    failedCounters = 0
-    expected_waiting = []
-    for p_waiting in prob_waiting:
-        failedCounters += 1
-        analytical[failedCounters] = 1/(mu*(n-A))*p_waiting
-        print(1/(mu*(n-A))*p_waiting)
-    
-calculateAnalytical()
+    return teller/float(nevner)
+
+def time(n):
+    global lambdaC
+    mu = 1/2
+    A=lambdaC/mu 
+    return (1/(mu*(n-A)))
+
+def calculateAnalytical():
+    timeToWait = []
+    totalWait = 0
+    for a in range(0, 4): #antall ødelagte counters
+        waitTime = prob(4-a)*time(4-a)
+        timeToWait.append(waitTime)
+        totalWait += waitTime*prob(4-a)
+    return totalWait, timeToWait
+
+# Printing avgValues from simulations-----------------------------------------------------------------------
+avgAvailability = sum(allServiceA)/float(len(allServiceA))
+avgQtime = sum(allQtimes)/float(len(allQtimes))
+print("Average asymptotic availability of checkout:                  ", format(avgAvailability*100, ".8f"), "%")
+print("Average waiting time for customers in checkout queue:   ", format(avgQtime, ".8f"), "minutes") 
+
+totalWait, timeToWait = calculateAnalytical()
+for times in range(len(timeToWait)):
+    print("Expected waiting time with", times, "working counters:", format(timeToWait[times], ".6f"), "minutes")
+print("                  Total expected waiting time:", format(totalWait, ".6f"), "minutes")
+
 
 #Plotting --------------------------------------------------------------------------------------------------------
-fig, ax = plt.subplots() 
-ax.boxplot(failuresAtHead.values(), showfliers=False) #Vil ikke vise outliers, for å kunne se boxplottene ordentlig 
-ax.set_xticklabels(failuresAtHead.keys())
-plt.plot(analytical.keys(), analytical.values(), 'r.', markersize = 20)
+
+fig, ax = plt.subplots()
+ax.boxplot(failuresAtHead.values(), showfliers=False, positions=list(failuresAtHead.keys())) #Vil ikke vise outliers, for å kunne se boxplottene ordentlig 
+plt.plot(list(failuresAtHead.keys()), timeToWait, 'r.', markersize = 20)
 
 plt.xlabel("Number of failed counters")
 plt.ylabel("Average Qtime for failures")
