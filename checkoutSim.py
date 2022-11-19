@@ -28,7 +28,10 @@ def resetGlobals(): #For å kunne resette for hver kjøring
     for noOFWorkingCounters in range(1, 5): #for å kunne analysere Qtime vs antall fungerende counters, se impact av failure på Qtime. Logger uansett aldri for 0
         headOfQ[noOFWorkingCounters] = []
 
-#Values for keeping track of important results
+
+
+
+#Values for keeping track of important results-------------------------------------------------------------------------
 allServiceA = []
 allQtimes = []
 avgNoOfFailures = [0, 0, 0, 0]
@@ -155,7 +158,6 @@ def updateFailuresAtHead(dictFromRun):
 
 
 
-
 # Calculating service availability and avgQtime---------------------------------------------------------------------
 def logValues(headOfQ): 
     global allServiceA, allQtimes
@@ -218,16 +220,18 @@ def calculateAnalytical():
     timeToWait = []
     totalWait = 0
     for a in range(0, 4): #antall ødelagte counters
-        waitTime = prob(4-a)*time(4-a)
+        waitTime = time(4-a)*prob(4-a)
         timeToWait.append(waitTime)
-        totalWait += waitTime*prob(4-a)
+        stateProb = [48/10675, 384/10675, 2048/10675, 8192/10675] #sannsynligheten for at 1 fungerer til at 4 fungerer
+        stateProb.reverse() #vil ha sannsynligheten fra at 4 til at 1 fungerer
+        totalWait += waitTime*stateProb[a] #ganger forventet ventetid med sannsynligheten for at n counters fungerer 
     return totalWait, timeToWait
 
 
 
 #Running simulation-----------------------------------------------------------------------------------------------
-SIM_TIME = 60*60 #enhet min, 16 timer
-noOfSims = 500
+SIM_TIME = 60*200##enhet min, 200 timer
+noOfSims = 200
 
 for simulation in range(noOfSims):
     env = simpy.Environment() 
